@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Warehouse Empty Space Monitor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="viewport card">
+        <div class="canvas-header">
+          <p>Green: real empty, Orange: occupied, Red: blocked (ghost-empty impact), Blue: selected.</p>
+        </div>
+
+        <div class="scene-topbar">
+          <div class="scene-controls" id="sceneControlsBar">
+            <button id="panelToggleBtn" type="button" class="secondary">Menu</button>
+            <button id="zoomInBtn" type="button" class="secondary">+</button>
+            <button id="zoomOutBtn" type="button" class="secondary">-</button>
+            <button id="rotateLeftBtn" type="button" class="secondary">⟲</button>
+            <button id="rotateRightBtn" type="button" class="secondary">⟳</button>
+            <button id="zoomResetBtn" type="button" class="secondary">Reset</button>
+            <button id="openDataBtn" type="button" class="secondary">Data</button>
+            <button id="openResultBtn" type="button" class="secondary">Result</button>
+            <button id="analyzeTopBtn" type="button">Analyze + Pre-Allocate</button>
+          </div>
+          <div class="scene-user">
+            <strong>User:</strong>
+            <span id="topbarUserLabel">Administrator</span>
+            <button id="openAuthBtn" type="button" class="secondary">Login</button>
+          </div>
+        </div>
+
+        <canvas id="warehouseCanvas" aria-label="3D warehouse layout"></canvas>
+      </section>
+
+      <aside class="panel panel-drawer" id="rightDrawer">
+        <div class="drawer-head">
+          <button id="mobileCloseMenuBtn" type="button" class="secondary">Close Menu</button>
+        </div>
+        <section class="card">
+          <h2>Filter</h2>
+          <label for="filterFieldSelect">Field</label>
+          <select id="filterFieldSelect">
+            <option value="LOCATION_TYPE">Location Type</option>
+            <option value="GROUP">Group</option>
+            <option value="RACK_LEVEL">Rack Level</option>
+            <option value="PALLET_TYPE">Pallet Type</option>
+            <option value="LOCATION_SEARCH">Location Search</option>
+            <option value="SKU">SKU</option>
+            <option value="DAYS_LEFT_TO_EXPIRE">Number of Days left to expire</option>
+          </select>
+
+          <label for="filterOperatorSelect">Operator</label>
+          <select id="filterOperatorSelect">
+            <option value="EQ">=</option>
+            <option value="IN">is in</option>
+            <option value="GTE">Greaterthan or =</option>
+            <option value="LTE">Less than =</option>
+          </select>
+
+          <label for="filterValueInput">Value</label>
+          <textarea id="filterValueInput" rows="3" placeholder="Enter value (for is in: A, B, C)"></textarea>
+
+          <div class="actions wrap">
+            <button id="addFilterRuleBtn" type="button" class="secondary">Add Filter</button>
+            <button id="clearFilterRulesBtn" type="button" class="secondary">Clear Filters</button>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Operator</th>
+                <th>Value</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="activeFilterBody"></tbody>
+          </table>
+
+          <div class="actions wrap">
+            <label><input id="quickPickingToggle" type="checkbox" checked /> Show Picking locations</label>
+            <label><input id="quickStorageToggle" type="checkbox" checked /> Show Storage locations</label>
+            <label><input id="quickEmptyHighlightToggle" type="checkbox" checked /> Show Empty locations (yellow)</label>
+            <label><input id="quickGhostToggle" type="checkbox" checked /> Show Ghost zones</label>
+          </div>
+          <p class="hint">Blue tick = visible (unhide). Unticked = hidden.</p>
+        </section>
+
+        <section class="card stats">
+          <h2>Status Summary</h2>
+          <p><strong>Total Locations:</strong> <span id="totalLocations">0</span></p>
+          <p><strong>Allocated:</strong> <span id="allocatedCount">0</span></p>
+          <p><strong>Unallocated:</strong> <span id="unallocatedCount">0</span></p>
+          <p><strong>System Empty:</strong> <span id="systemEmpty">0</span></p>
+          <p><strong>Real Empty:</strong> <span id="realEmpty">0</span></p>
+          <p><strong>Ghost Empty:</strong> <span id="ghostEmpty">0</span></p>
+          <p><strong>Selected Location:</strong> <span id="selectedLocation">None</span></p>
+        </section>
+
+        <section class="card stats">
+          <h2>Pallet Details</h2>
+          <p><strong>Status:</strong> <span id="detailStatus">-</span></p>
+          <p><strong>Source:</strong> <span id="detailSource">-</span></p>
+          <p><strong>Pallet ID:</strong> <span id="detailPalletId">-</span></p>
+          <p><strong>SKU:</strong> <span id="detailSku">-</span></p>
+          <p><strong>Pallet Type:</strong> <span id="detailType">-</span></p>
+          <p><strong>Height:</strong> <span id="detailHeight">-</span></p>
+          <p><strong>Weight:</strong> <span id="detailWeight">-</span></p>
+          <p><strong>Total Quantity:</strong> <span id="detailQuantity">-</span></p>
+          <p><strong>BBD:</strong> <span id="detailBbd">-</span></p>
+        </section>
+
+        <section class="card table-card">
+          <h2>Top Ghost Zones</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Zone</th>
+                <th>System Empty</th>
+                <th>Real Empty</th>
+                <th>Ghost Empty</th>
+              </tr>
+            </thead>
+            <tbody id="ghostTableBody"></tbody>
+          </table>
+        </section>
+
+        <section class="card table-card">
+          <h2>FIFO Recommendations</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>SKU</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="fifoRecoBody"></tbody>
+          </table>
+        </section>
+
+        <section class="card table-card">
+          <h2>Fast-Mover Recommendations</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Action</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody id="recoTableBody"></tbody>
+          </table>
+        </section>
+
+        <section class="card table-card" id="auditCard">
+          <h2>Allocation Audit</h2>
+          <p><strong>Current Role:</strong> <span id="currentUserRole">-</span></p>
+          <div class="actions wrap" id="auditAdminActions">
+            <button id="downloadAuditLog" type="button" class="secondary">Download Audit Log</button>
+            <button id="clearAuditLog" type="button" class="secondary">Clear Audit Log</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="auditLogBody"></tbody>
+          </table>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/location_master_data.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script type="module" src="/app.js"></script>
+
+    <div id="dataModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dataModalTitle">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="dataModalTitle">Data</h2>
+          <button id="dataModalClose" type="button" class="secondary">Close</button>
+        </div>
+
+        <label for="inventoryFile">Real-Time Inventory (.csv)</label>
+        <input id="inventoryFile" type="file" accept=".csv,.xlsx,.xls" />
+        <label for="productMasterFile">Product Measurements (.csv/.xlsx)</label>
+        <input id="productMasterFile" type="file" accept=".csv,.xlsx,.xls" />
+        <p class="hint">Used to calculate pallet height/weight from SKU + case quantity in Netto inventory.</p>
+
+        <label for="incomingFile">Incoming PO Files (.csv/.xlsx)</label>
+        <input id="incomingFile" type="file" accept=".csv,.xlsx,.xls" multiple />
+        <div class="actions">
+          <button id="clearIncomingFilesBtn" type="button" class="secondary">Clear Incoming Files</button>
+        </div>
+        <p class="hint">Selected incoming files:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>File Name</th>
+              <th>Size (KB)</th>
+            </tr>
+          </thead>
+          <tbody id="incomingFilesBody"></tbody>
+        </table>
+
+        <label for="fastMovingFile">Fast Moving Data (.csv)</label>
+        <input id="fastMovingFile" type="file" accept=".csv,.xlsx,.xls" />
+
+        <h2>Manual Upcoming Input</h2>
+        <label for="manualSku">SKU</label>
+        <input id="manualSku" type="text" placeholder="e.g. SKU-1001" />
+
+        <label for="manualPalletType">Pallet Type</label>
+        <select id="manualPalletType">
+          <option value="STANDARD">STANDARD</option>
+          <option value="EURO">EURO</option>
+        </select>
+
+        <label for="manualHeight">Height</label>
+        <input id="manualHeight" type="number" min="0" step="0.01" placeholder="e.g. 170" />
+
+        <label for="manualWeight">Weight</label>
+        <input id="manualWeight" type="number" min="0" step="0.01" placeholder="e.g. 900" />
+
+        <label for="manualBbd">BBD</label>
+        <input id="manualBbd" type="date" />
+
+        <label for="manualTotalPallets">Total Number of Pallets</label>
+        <input id="manualTotalPallets" type="number" min="1" step="1" value="1" />
+
+        <div class="actions">
+          <button id="addManualLineBtn" type="button" class="secondary">Add Manual Line</button>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Type</th>
+              <th>Height</th>
+              <th>Weight</th>
+              <th>BBD</th>
+              <th>Total</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="manualLinesBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="resultModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="resultModalTitle">
+      <div class="modal-card auth-card">
+        <div class="modal-head">
+          <h2 id="resultModalTitle">Downloads</h2>
+          <button id="resultModalClose" type="button" class="secondary">Close</button>
+        </div>
+        <div class="actions wrap">
+          <button id="downloadZone" type="button" class="secondary" disabled>Zone Report</button>
+          <button id="downloadPlan" type="button" class="secondary" disabled>Pre-allocation</button>
+          <button id="downloadProjection" type="button" class="secondary" disabled>Inventory Projection</button>
+          <button id="downloadFifoMovement" type="button" class="secondary" disabled>FIFO Movement</button>
+          <button id="downloadMissingSku" type="button" class="secondary" disabled>Missing Product SKU</button>
+          <button id="downloadProblems" type="button" class="secondary" disabled>Problem solving</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="fifoModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="fifoModalTitle">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="fifoModalTitle">FIFO Warning by SKU</h2>
+          <button id="fifoModalClose" type="button" class="secondary">Close</button>
+        </div>
+        <div id="fifoModalBody"></div>
+      </div>
+    </div>
+
+    <div
+      id="validationModal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="validationModalTitle"
+    >
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="validationModalTitle">Inventory Validation Alerts</h2>
+          <button id="validationModalClose" type="button" class="secondary">Close</button>
+        </div>
+        <div id="validationModalBody"></div>
+      </div>
+    </div>
+
+    <div id="pickingSuggestionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pickingSuggestionModalTitle">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="pickingSuggestionModalTitle">Picking location suggestions</h2>
+          <button id="pickingSuggestionModalClose" type="button" class="secondary">Close</button>
+        </div>
+        <div id="pickingSuggestionModalBody"></div>
+      </div>
+    </div>
+
+    <div id="systemSuggestionModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="systemSuggestionModalTitle">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="systemSuggestionModalTitle">System suggestion</h2>
+          <button id="systemSuggestionModalClose" type="button" class="secondary">Close</button>
+        </div>
+        <div id="systemSuggestionModalBody"></div>
+      </div>
+    </div>
+
+    <div
+      id="preallocationSuggestionModal"
+      class="modal hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="preallocationSuggestionModalTitle"
+    >
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="preallocationSuggestionModalTitle">Pre-allocation suggestion</h2>
+          <button id="preallocationSuggestionModalClose" type="button" class="secondary">Close</button>
+        </div>
+        <div id="preallocationSuggestionModalBody"></div>
+      </div>
+    </div>
+
+    <div id="palletModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="palletModalTitle">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2 id="palletModalTitle">Pallet Details</h2>
+          <button id="palletModalClose" type="button" class="secondary">Close</button>
+        </div>
+        <div id="palletModalBody"></div>
+      </div>
+    </div>
+
+    <div id="authModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+      <div class="modal-card auth-card">
+        <div class="modal-head">
+          <h2 id="authModalTitle">User Login</h2>
+          <button id="authModalClose" type="button" class="secondary">Close</button>
+        </div>
+        <label for="authUsername">Username</label>
+        <input id="authUsername" type="text" placeholder="Enter username" />
+        <label for="authPassword">Password</label>
+        <input id="authPassword" type="password" placeholder="Enter password" />
+        <label for="authRole">Role (Admin only can create users)</label>
+        <select id="authRole">
+          <option value="USER">USER</option>
+          <option value="ADMIN">ADMIN</option>
+        </select>
+        <label>User Permissions</label>
+        <div class="actions wrap" id="authPermissionsBox">
+          <label><input id="permUploadData" type="checkbox" checked /> Upload / Data</label>
+          <label><input id="permDownloadReports" type="checkbox" checked /> Download Reports</label>
+          <label><input id="permViewLoginActivity" type="checkbox" /> View Login Activity</label>
+        </div>
+        <div class="actions">
+          <button id="authLoginBtn" type="button">Login</button>
+          <button id="authCreateBtn" type="button" class="secondary">Create Account</button>
+          <button id="authLogoutBtn" type="button" class="secondary">Logout</button>
+        </div>
+        <h2>Users</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Permissions</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+        <p class="hint" id="authStatusText">Default user: admin / admin123</p>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "name": "warehouse-3d-allocation",
+  "version": "1.0.0",
+  "description": "Warehouse 3D allocation and FIFO analysis app (web + desktop)",
+  "main": "electron/main.js",
+  "author": "Warehouse Team",
+  "license": "MIT",
+  "scripts": {
+    "desktop:dev": "electron .",
+    "desktop:build": "electron-builder --mac --win",
+    "desktop:build:mac": "electron-builder --mac",
+    "desktop:build:win": "electron-builder --win",
+    "web:serve": "python3 -m http.server 8000",
+    "web:server": "node server.js"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.warehouse.allocation3d",
+    "productName": "Warehouse 3D Allocation",
+    "files": [
+      "index.html",
+      "app.js",
+      "styles.css",
+      "location_master_data.js",
+      "electron/**/*",
+      "README.md"
+    ],
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.business"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

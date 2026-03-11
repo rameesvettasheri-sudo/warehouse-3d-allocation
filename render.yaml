@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: warehouse-3d-allocation
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run web:server
+    autoDeploy: true
+

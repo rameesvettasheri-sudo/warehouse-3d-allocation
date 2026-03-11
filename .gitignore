@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-desktop/
+output/
+data/
+*.log
+.DS_Store
+*.zip
+
