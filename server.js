@@ -203,6 +203,36 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, { ok: true, users: filtered.map(normalizeUser) });
   }
 
+  if (req.method === "POST" && pathname === "/api/users/change-password") {
+    const body = await readBody(req);
+    const actorUser = String(body.actor_user || "").trim();
+    const actorRole = String(body.actor_role || "").trim().toUpperCase();
+    const username = String(body.username || "").trim();
+    const oldPassword = String(body.old_password || "").trim();
+    const newPassword = String(body.new_password || "").trim();
+    if (!username || !newPassword) {
+      return sendJson(res, 400, { ok: false, error: "Username and new password required" });
+    }
+    const users = getUsers();
+    const actor = users.find((u) => u.username === actorUser);
+    if (!actor || actorRole !== actor.role) {
+      return sendJson(res, 403, { ok: false, error: "Authentication required" });
+    }
+    const target = users.find((u) => u.username === username);
+    if (!target) return sendJson(res, 404, { ok: false, error: "User not found" });
+    const isSelf = actorUser === username;
+    const isAdmin = actor.role === "ADMIN";
+    if (!isSelf && !isAdmin) {
+      return sendJson(res, 403, { ok: false, error: "Only admin can change other users password" });
+    }
+    if (isSelf && target.password !== oldPassword) {
+      return sendJson(res, 401, { ok: false, error: "Current password is incorrect" });
+    }
+    target.password = newPassword;
+    saveUsers(users);
+    return sendJson(res, 200, { ok: true, user: normalizeUser(target) });
+  }
+
   if (req.method === "GET" && pathname === "/api/activity") {
     return sendJson(res, 200, { logs: getLogs() });
   }

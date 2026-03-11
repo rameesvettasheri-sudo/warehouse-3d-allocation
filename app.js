@@ -106,6 +106,7 @@ const ui = {
   permViewLoginActivity: document.getElementById("permViewLoginActivity"),
   authLoginBtn: document.getElementById("authLoginBtn"),
   authCreateBtn: document.getElementById("authCreateBtn"),
+  authChangePasswordBtn: document.getElementById("authChangePasswordBtn"),
   authLogoutBtn: document.getElementById("authLogoutBtn"),
   authStatusText: document.getElementById("authStatusText"),
   usersTableBody: document.getElementById("usersTableBody"),
@@ -3967,6 +3968,77 @@ ui.authCreateBtn.addEventListener("click", async () => {
   renderUsersTable();
   logActivity("CREATE_USER", `created=${username}, role=${role}, perms=${permissionsLabel(permissions, role)}`);
   ui.authStatusText.textContent = `Account created for ${username} (${role}).`;
+});
+ui.authChangePasswordBtn?.addEventListener("click", async () => {
+  if (!isAuthenticated()) {
+    ui.authStatusText.textContent = "Login required to change password.";
+    enforceLoginModal();
+    return;
+  }
+  const targetUsername = String(ui.authUsername?.value || "").trim() || getCurrentUser();
+  const currentPassword = window.prompt(`Current password for ${targetUsername}:`, "") || "";
+  if (!currentPassword) {
+    ui.authStatusText.textContent = "Password change cancelled.";
+    return;
+  }
+  const newPassword = window.prompt("Enter new password:", "") || "";
+  if (!newPassword) {
+    ui.authStatusText.textContent = "New password is required.";
+    return;
+  }
+  const confirmPassword = window.prompt("Confirm new password:", "") || "";
+  if (newPassword !== confirmPassword) {
+    ui.authStatusText.textContent = "New password and confirm password do not match.";
+    return;
+  }
+  if (serverAuditEnabled) {
+    try {
+      const resp = await fetch(`${API_BASE}/users/change-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actor_user: getCurrentUser(),
+          actor_role: getCurrentRole(),
+          username: targetUsername,
+          old_password: currentPassword,
+          new_password: newPassword,
+        }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        ui.authStatusText.textContent = body.error || "Unable to change password.";
+        return;
+      }
+      if (serverAuditEnabled) await refreshServerUsers(true);
+      logActivity("CHANGE_PASSWORD", `username=${targetUsername}`);
+      ui.authStatusText.textContent = `Password changed for ${targetUsername}.`;
+      return;
+    } catch {
+      ui.authStatusText.textContent = "Unable to change password.";
+      return;
+    }
+  }
+  const users = loadUsers();
+  const actor = users.find((u) => u.username === getCurrentUser());
+  const target = users.find((u) => u.username === targetUsername);
+  if (!actor || !target) {
+    ui.authStatusText.textContent = "User not found.";
+    return;
+  }
+  const isSelf = actor.username === targetUsername;
+  const isAdmin = String(actor.role || "").toUpperCase() === "ADMIN";
+  if (!isSelf && !isAdmin) {
+    ui.authStatusText.textContent = "Only ADMIN can change other users password.";
+    return;
+  }
+  if (isSelf && target.password !== currentPassword) {
+    ui.authStatusText.textContent = "Current password is incorrect.";
+    return;
+  }
+  target.password = newPassword;
+  saveUsers(users);
+  logActivity("CHANGE_PASSWORD", `username=${targetUsername}`);
+  ui.authStatusText.textContent = `Password changed for ${targetUsername}.`;
 });
 ui.authLogoutBtn.addEventListener("click", () => {
   logActivity("LOGOUT", `user=${getCurrentUser()}`);
