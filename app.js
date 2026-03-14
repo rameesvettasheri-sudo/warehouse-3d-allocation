@@ -1566,13 +1566,15 @@ function showPalletPopup(node) {
     ui.palletModalBody.appendChild(h);
     const t = document.createElement("table");
     t.innerHTML =
-      "<thead><tr><th>Order Number</th><th>SKU</th><th>Min Days</th><th>Required Qty</th><th>Pallet BBD</th><th>Qty Available</th></tr></thead>";
+      "<thead><tr><th>Order Number</th><th>SKU</th><th>Req UOM</th><th>Min Days</th><th>Required Qty</th><th>Pallet BBD</th><th>Qty Available</th><th>Pallet UOM</th></tr></thead>";
     const tb = document.createElement("tbody");
     for (const m of bbdOptMatches) {
       const tr = document.createElement("tr");
       tr.innerHTML = `<td>${safeText(m.order_number)}</td><td>${safeText(m.sku)}</td><td>${safeText(
-        m.min_days_required
-      )}</td><td>${safeText(m.required_quantity)}</td><td>${safeText(m.bbd)}</td><td>${safeText(m.quantity_available)}</td>`;
+        m.required_uom
+      )}</td><td>${safeText(m.min_days_required)}</td><td>${safeText(m.required_quantity)}</td><td>${safeText(
+        m.bbd
+      )}</td><td>${safeText(m.quantity_available)}</td><td>${safeText(m.quantity_unit)}</td>`;
       tb.appendChild(tr);
     }
     t.appendChild(tb);
@@ -3628,16 +3630,41 @@ function inventoryQtyForSku(node, sku) {
 function parseBbdRuleRows(rawRows) {
   if (!Array.isArray(rawRows) || !rawRows.length) return [];
   const keys = Object.keys(rawRows[0] || {});
-  const skuKey = findHeaderKey(keys, ["SKU", "ZBOZI", "ZBOŽÍ", "INTERNAL REFERENCE", "INTERNALREFERENCE", "ITEM"]);
-  const daysKey = findHeaderKey(keys, [
-    "MINIMUM DAYS REQUIRED",
-    "MIN DAYS REQUIRED",
-    "MINDAYSREQUIRED",
-    "MIN DAYS",
-    "MINIMUM DAYS",
-    "DAYS REQUIRED",
-    "DNY",
-  ]);
+  const skuKey =
+    findHeaderKeyExactFirst(keys, [
+      "SKU",
+      "ZBOZI",
+      "ZBOŽÍ",
+      "INTERNAL REFERENCE",
+      "INTERNALREFERENCE",
+      "ITEM",
+      "PRODUCT",
+    ]) || findHeaderKey(keys, ["SKU", "ZBOZI", "ZBOŽÍ", "INTERNAL REFERENCE", "INTERNALREFERENCE", "ITEM", "PRODUCT"]);
+  const daysKey =
+    findHeaderKeyExactFirst(keys, [
+      "MINIMUM DAYS REQUIRED",
+      "MIN DAYS REQUIRED",
+      "MINDAYSREQUIRED",
+      "MIN DAYS",
+      "MINIMUM DAYS",
+      "DAYS REQUIRED",
+      "MINIMUM BBD DAYS",
+      "BBD MIN DAYS",
+      "BBD DAYS",
+      "DNY",
+    ]) ||
+    findHeaderKey(keys, [
+      "MINIMUM DAYS REQUIRED",
+      "MIN DAYS REQUIRED",
+      "MINDAYSREQUIRED",
+      "MIN DAYS",
+      "MINIMUM DAYS",
+      "DAYS REQUIRED",
+      "MINIMUM BBD DAYS",
+      "BBD MIN DAYS",
+      "BBD DAYS",
+      "DNY",
+    ]);
   if (!skuKey || !daysKey) return [];
   const out = [];
   for (const row of rawRows) {
@@ -3652,19 +3679,56 @@ function parseBbdRuleRows(rawRows) {
 function parseDeliveryOrderRows(rawRows) {
   if (!Array.isArray(rawRows) || !rawRows.length) return [];
   const keys = Object.keys(rawRows[0] || {});
-  const orderKey = findHeaderKey(keys, [
-    "ORDER NUMBER",
-    "ORDER",
-    "DELIVERY ORDER",
-    "DO",
-    "REFERENCE",
-    "NAME",
-    "TRANSFER",
-    "PICKING",
+  const orderKey =
+    findHeaderKeyExactFirst(keys, [
+      "Operations without package/Source",
+      "ORDER NUMBER",
+      "DELIVERY ORDER",
+      "SOURCE",
+      "ORIGIN",
+      "TRANSFER",
+      "PICKING",
+    ]) ||
+    findHeaderKey(keys, ["ORDER NUMBER", "DELIVERY ORDER", "SOURCE", "ORIGIN", "TRANSFER", "PICKING"]);
+  const skuKey =
+    findHeaderKeyExactFirst(keys, [
+      "Operations without package/Product/Internal Reference",
+      "SKU",
+      "ZBOZI",
+      "ZBOŽÍ",
+      "INTERNAL REFERENCE",
+      "PRODUCT INTERNAL REFERENCE",
+    ]) ||
+    findHeaderKey(keys, ["SKU", "ZBOZI", "ZBOŽÍ", "INTERNAL REFERENCE", "PRODUCT INTERNAL REFERENCE"]);
+  const qtyKey =
+    findHeaderKeyExactFirst(keys, [
+      "Operations without package/Reserved Quantity",
+      "RESERVED QUANTITY",
+      "QUANTITY",
+      "QTY",
+      "MNOZSTVI",
+      "MNOŽSTVÍ",
+      "DEMAND",
+      "NEEDED",
+    ]) ||
+    findHeaderKey(keys, ["RESERVED QUANTITY", "QUANTITY", "QTY", "MNOZSTVI", "MNOŽSTVÍ", "DEMAND", "NEEDED"]);
+  const uomKey =
+    findHeaderKeyExactFirst(keys, [
+      "Operations without package/Unit of Measure",
+      "UNIT OF MEASURE",
+      "JEDNOTKA",
+      "UNIT",
+      "UOM",
+      "MJ",
+    ]) || findHeaderKey(keys, ["UNIT OF MEASURE", "JEDNOTKA", "UNIT", "UOM", "MJ"]);
+  const daysKey = findHeaderKey(keys, [
+    "MINIMUM DAYS REQUIRED",
+    "MIN DAYS REQUIRED",
+    "MIN DAYS",
+    "DAYS REQUIRED",
+    "MINIMUM BBD DAYS",
+    "BBD MIN DAYS",
   ]);
-  const skuKey = findHeaderKey(keys, ["SKU", "ZBOZI", "ZBOŽÍ", "PRODUCT", "ITEM", "INTERNAL REFERENCE"]);
-  const qtyKey = findHeaderKey(keys, ["QUANTITY", "QTY", "MNOZSTVI", "MNOŽSTVÍ", "DEMAND", "NEEDED"]);
-  const daysKey = findHeaderKey(keys, ["MINIMUM DAYS REQUIRED", "MIN DAYS REQUIRED", "MIN DAYS", "DAYS REQUIRED"]);
   if (!skuKey || !qtyKey) return [];
 
   const out = [];
@@ -3678,6 +3742,7 @@ function parseDeliveryOrderRows(rawRows) {
     out.push({
       order_number: orderNumberRaw || `ORDER-${String(fallbackIdx).padStart(4, "0")}`,
       sku,
+      required_uom: normalizeQtyUnit(uomKey ? row[uomKey] : "CASE"),
       min_days_required: Number.isFinite(minDays) ? Math.max(0, Math.floor(minDays)) : NaN,
       quantity: qty,
     });
@@ -3755,6 +3820,7 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
     const rowMinDays = Number.isFinite(toNum(src.min_days_required)) ? Math.max(0, Math.floor(toNum(src.min_days_required))) : 0;
     const minDays = Number.isFinite(ruleMin) ? Math.max(ruleMin, rowMinDays) : rowMinDays;
     const minDate = formatBbdOptDateThreshold(minDays);
+    const requiredUom = normalizeQtyUnit(src.required_uom || "CASE");
 
     const candidates = [];
     for (const node of locationNodes) {
@@ -3770,11 +3836,15 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
         bbd,
         bbdTime: bbdDate.getTime(),
         quantity_available: availQty,
+        quantity_unit: normalizeQtyUnit(node.pallet?.quantity_unit || "CASE"),
         location_type: locationTypeLabel(node),
       });
     }
 
     candidates.sort((a, b) => {
+      const uA = a.quantity_unit === requiredUom ? 0 : 1;
+      const uB = b.quantity_unit === requiredUom ? 0 : 1;
+      if (uA !== uB) return uA - uB;
       if (a.bbdTime !== b.bbdTime) return a.bbdTime - b.bbdTime;
       if (a.location_type !== b.location_type) return a.location_type.localeCompare(b.location_type);
       return a.node.code.localeCompare(b.node.code);
@@ -3794,10 +3864,12 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
       bbdOptSelectionsByLocation.get(key).push({
         order_number: src.order_number,
         sku,
+        required_uom: requiredUom,
         min_days_required: minDays,
         required_quantity: requiredQty,
         bbd: c.bbd,
         quantity_available: c.quantity_available,
+        quantity_unit: c.quantity_unit,
       });
     }
 
@@ -3806,16 +3878,19 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
     rows.push({
       order_number: src.order_number,
       sku,
+      required_uom: requiredUom,
       min_days_required: minDays,
       required_quantity: requiredQty,
       bbd_1: c1 ? c1.bbd : "",
       location_1: c1 ? c1.node.code : "",
       location_type_1: c1 ? c1.location_type : "",
       quantity_available_1: c1 ? c1.quantity_available : "",
+      quantity_unit_1: c1 ? c1.quantity_unit : "",
       bbd_2: c2 ? c2.bbd : "",
       location_2: c2 ? c2.node.code : "",
       location_type_2: c2 ? c2.location_type : "",
       quantity_available_2: c2 ? c2.quantity_available : "",
+      quantity_unit_2: c2 ? c2.quantity_unit : "",
       status: remaining <= 0 ? "MATCHED" : "INSUFFICIENT STOCK",
       note:
         chosen.length > 2
