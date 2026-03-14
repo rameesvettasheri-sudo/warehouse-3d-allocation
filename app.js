@@ -39,8 +39,22 @@ const ui = {
   manualLinesBody: document.getElementById("manualLinesBody"),
   analyzeTopBtn: document.getElementById("analyzeTopBtn"),
   openDataBtn: document.getElementById("openDataBtn"),
+  openBbdOptBtn: document.getElementById("openBbdOptBtn"),
   dataModal: document.getElementById("dataModal"),
   dataModalClose: document.getElementById("dataModalClose"),
+  bbdOptModal: document.getElementById("bbdOptModal"),
+  bbdOptModalClose: document.getElementById("bbdOptModalClose"),
+  bbdRulesFile: document.getElementById("bbdRulesFile"),
+  deliveryOrderFile: document.getElementById("deliveryOrderFile"),
+  bbdOptOrderNumber: document.getElementById("bbdOptOrderNumber"),
+  bbdOptSku: document.getElementById("bbdOptSku"),
+  bbdOptMinDays: document.getElementById("bbdOptMinDays"),
+  bbdOptQty: document.getElementById("bbdOptQty"),
+  bbdOptAddManualBtn: document.getElementById("bbdOptAddManualBtn"),
+  bbdOptManualBody: document.getElementById("bbdOptManualBody"),
+  bbdOptSearchBtn: document.getElementById("bbdOptSearchBtn"),
+  bbdOptDownloadBtn: document.getElementById("bbdOptDownloadBtn"),
+  bbdOptStatus: document.getElementById("bbdOptStatus"),
   openResultBtn: document.getElementById("openResultBtn"),
   resultModal: document.getElementById("resultModal"),
   resultModalClose: document.getElementById("resultModalClose"),
@@ -151,6 +165,11 @@ let preallocationSuggestionRows = [];
 let latestProductBySku = new Map();
 let selectedLocationCode = null;
 let manualLines = [];
+let bbdOptManualLines = [];
+let bbdOptResultRows = [];
+let bbdOptSelectionsByLocation = new Map();
+let bbdOptRuleBySku = new Map();
+let bbdOptDeliveryFilesQueue = [];
 let incomingFilesQueue = [];
 let zoomLevel = 1;
 let panX = 0;
@@ -173,6 +192,7 @@ const USERS_KEY = "warehouse_users_v1";
 const CURRENT_USER_KEY = "warehouse_current_user_v1";
 const CURRENT_ROLE_KEY = "warehouse_current_role_v1";
 const CURRENT_PERMISSIONS_KEY = "warehouse_current_permissions_v1";
+const AUTH_TOKEN_KEY = "warehouse_auth_token_v1";
 const ACTIVITY_LOG_KEY = "warehouse_activity_log_v1";
 const API_BASE = `${window.location.origin}/api`;
 
@@ -181,6 +201,26 @@ let serverAuditLogsCache = [];
 let serverAuditRefreshInProgress = false;
 let lastServerAuditRefresh = 0;
 let serverUsersCache = [];
+
+function getAuthToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY) || "";
+}
+
+function setAuthToken(token) {
+  const t = String(token || "").trim();
+  if (t) {
+    localStorage.setItem(AUTH_TOKEN_KEY, t);
+  } else {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+}
+
+function authHeaders(extra = {}) {
+  const headers = { ...extra };
+  const token = getAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
 
 function standardFootprint(c) {
   return c * STANDARD_SPACE_FACTOR;
@@ -512,6 +552,7 @@ function buildLocationNodes() {
 }
 
 function resetDynamicState() {
+  clearBbdOptSelections();
   for (const z of zones.values()) {
     z.occupiedEuro = 0;
     z.occupiedStandard = 0;
@@ -1064,16 +1105,21 @@ function drawRackAndPallet(node, p) {
   const slotH = 10.2 * zoomLevel;
   const slotD = 5.8 * zoomLevel;
   const selected = node.code === selectedLocationCode;
+  const isBbdOpt = bbdOptSelectionsByLocation.has(node.code);
   const isPreallocated = node.pallet && node.pallet.source === "INCOMING_PO";
 
   if (node.status === "OCCUPIED") {
-    const top = isPreallocated ? "#7ac9ff" : "#d8c6a2";
-    const left = isPreallocated ? "#5aaee4" : "#c5b18a";
-    const right = isPreallocated ? "#4a97cf" : "#b49e79";
-    const stroke = isPreallocated ? "#2b6fa3" : "#7d6f56";
+    const top = isBbdOpt ? "#d69aff" : isPreallocated ? "#7ac9ff" : "#d8c6a2";
+    const left = isBbdOpt ? "#b972ef" : isPreallocated ? "#5aaee4" : "#c5b18a";
+    const right = isBbdOpt ? "#9b54d4" : isPreallocated ? "#4a97cf" : "#b49e79";
+    const stroke = isBbdOpt ? "#6f2c9c" : isPreallocated ? "#2b6fa3" : "#7d6f56";
     drawIsoPrism(p.x, p.y + slotD * 0.26, slotW * 0.74, slotH * 0.72, slotD * 0.7, top, left, right, stroke);
     drawMiniBarcode(p.x - slotW * 0.18, p.y - slotH * 0.1, slotW * 0.22, slotH * 0.12);
-    if (isPreallocated) {
+    if (isBbdOpt) {
+      ctx.fillStyle = "#5f1a8a";
+      ctx.font = `${Math.max(8, 8 * zoomLevel)}px sans-serif`;
+      ctx.fillText("RE", p.x - 6 * zoomLevel, p.y - slotH * 0.22);
+    } else if (isPreallocated) {
       ctx.fillStyle = "#0d4a74";
       ctx.font = `${Math.max(8, 8 * zoomLevel)}px sans-serif`;
       ctx.fillText("PRE", p.x - 7 * zoomLevel, p.y - slotH * 0.22);
@@ -1513,6 +1559,25 @@ function showPalletPopup(node) {
       </tbody>
     </table>
   `;
+  const bbdOptMatches = bbdOptSelectionsByLocation.get(node.code) || [];
+  if (bbdOptMatches.length) {
+    const h = document.createElement("h3");
+    h.textContent = "BBD OPT Matches (RE)";
+    ui.palletModalBody.appendChild(h);
+    const t = document.createElement("table");
+    t.innerHTML =
+      "<thead><tr><th>Order Number</th><th>SKU</th><th>Min Days</th><th>Required Qty</th><th>Pallet BBD</th><th>Qty Available</th></tr></thead>";
+    const tb = document.createElement("tbody");
+    for (const m of bbdOptMatches) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${safeText(m.order_number)}</td><td>${safeText(m.sku)}</td><td>${safeText(
+        m.min_days_required
+      )}</td><td>${safeText(m.required_quantity)}</td><td>${safeText(m.bbd)}</td><td>${safeText(m.quantity_available)}</td>`;
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    ui.palletModalBody.appendChild(t);
+  }
   if (Array.isArray(pallet.items) && pallet.items.length > 1) {
     const h = document.createElement("h3");
     h.textContent = "Products on this pallet";
@@ -1716,7 +1781,10 @@ async function refreshServerUsers(force = false) {
   if (!serverAuditEnabled) return;
   if (!force && serverUsersCache.length) return;
   try {
-    const resp = await fetch(`${API_BASE}/users`, { cache: "no-store" });
+    const resp = await fetch(`${API_BASE}/users`, {
+      cache: "no-store",
+      headers: authHeaders(),
+    });
     if (!resp.ok) return;
     const body = await resp.json();
     if (body && Array.isArray(body.users)) {
@@ -1738,7 +1806,10 @@ async function refreshServerAuditLogs(force = false) {
   if (!force && now - lastServerAuditRefresh < 4000) return;
   serverAuditRefreshInProgress = true;
   try {
-    const resp = await fetch(`${API_BASE}/activity`, { cache: "no-store" });
+    const resp = await fetch(`${API_BASE}/activity`, {
+      cache: "no-store",
+      headers: authHeaders(),
+    });
     if (!resp.ok) return;
     const body = await resp.json();
     if (body && Array.isArray(body.logs)) {
@@ -1757,10 +1828,8 @@ async function pushServerAuditLog(entry) {
   try {
     await fetch(`${API_BASE}/activity`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
-        user: entry.user,
-        role: entry.role,
         action: entry.action,
         details: entry.details,
         client_time: entry.time,
@@ -1902,6 +1971,7 @@ function getCurrentUser() {
 
 function setCurrentUser(name) {
   localStorage.setItem(CURRENT_USER_KEY, name);
+  if (String(name || "").toLowerCase() === "guest") setAuthToken("");
   ui.topbarUserLabel.textContent = name;
   renderAccessState();
   updateAppLockState();
@@ -3527,6 +3597,240 @@ function createManualIncomingRows() {
   return rows;
 }
 
+function clearBbdOptSelections() {
+  bbdOptSelectionsByLocation = new Map();
+  bbdOptResultRows = [];
+  if (ui.bbdOptDownloadBtn) ui.bbdOptDownloadBtn.disabled = true;
+}
+
+function locationTypeLabel(node) {
+  return node?.isPicking ? "Picking" : "Storage";
+}
+
+function inventoryQtyForSku(node, sku) {
+  const targetSku = normalizeSkuCode(sku || "").toUpperCase();
+  if (!node?.pallet || !targetSku) return 0;
+  const pallet = node.pallet;
+  if (Array.isArray(pallet.items) && pallet.items.length) {
+    let sum = 0;
+    for (const item of pallet.items) {
+      if (normalizeSkuCode(item.sku || "").toUpperCase() !== targetSku) continue;
+      const q = toNum(item.qty);
+      if (Number.isFinite(q) && q > 0) sum += q;
+    }
+    return sum;
+  }
+  if (normalizeSkuCode(pallet.sku || "").toUpperCase() !== targetSku) return 0;
+  const q = toNum(pallet.total_quantity);
+  return Number.isFinite(q) && q > 0 ? q : 0;
+}
+
+function parseBbdRuleRows(rawRows) {
+  if (!Array.isArray(rawRows) || !rawRows.length) return [];
+  const keys = Object.keys(rawRows[0] || {});
+  const skuKey = findHeaderKey(keys, ["SKU", "ZBOZI", "ZBOŽÍ", "INTERNAL REFERENCE", "INTERNALREFERENCE", "ITEM"]);
+  const daysKey = findHeaderKey(keys, [
+    "MINIMUM DAYS REQUIRED",
+    "MIN DAYS REQUIRED",
+    "MINDAYSREQUIRED",
+    "MIN DAYS",
+    "MINIMUM DAYS",
+    "DAYS REQUIRED",
+    "DNY",
+  ]);
+  if (!skuKey || !daysKey) return [];
+  const out = [];
+  for (const row of rawRows) {
+    const sku = normalizeSkuCode(row[skuKey]);
+    const minDays = toNum(row[daysKey]);
+    if (!sku || !Number.isFinite(minDays)) continue;
+    out.push({ sku, min_days_required: Math.max(0, Math.floor(minDays)) });
+  }
+  return out;
+}
+
+function parseDeliveryOrderRows(rawRows) {
+  if (!Array.isArray(rawRows) || !rawRows.length) return [];
+  const keys = Object.keys(rawRows[0] || {});
+  const orderKey = findHeaderKey(keys, [
+    "ORDER NUMBER",
+    "ORDER",
+    "DELIVERY ORDER",
+    "DO",
+    "REFERENCE",
+    "NAME",
+    "TRANSFER",
+    "PICKING",
+  ]);
+  const skuKey = findHeaderKey(keys, ["SKU", "ZBOZI", "ZBOŽÍ", "PRODUCT", "ITEM", "INTERNAL REFERENCE"]);
+  const qtyKey = findHeaderKey(keys, ["QUANTITY", "QTY", "MNOZSTVI", "MNOŽSTVÍ", "DEMAND", "NEEDED"]);
+  const daysKey = findHeaderKey(keys, ["MINIMUM DAYS REQUIRED", "MIN DAYS REQUIRED", "MIN DAYS", "DAYS REQUIRED"]);
+  if (!skuKey || !qtyKey) return [];
+
+  const out = [];
+  let fallbackIdx = 1;
+  for (const row of rawRows) {
+    const sku = normalizeSkuCode(row[skuKey]);
+    const qty = toNum(row[qtyKey]);
+    if (!sku || !Number.isFinite(qty) || qty <= 0) continue;
+    const minDays = toNum(daysKey ? row[daysKey] : "");
+    const orderNumberRaw = orderKey ? String(row[orderKey] || "").trim() : "";
+    out.push({
+      order_number: orderNumberRaw || `ORDER-${String(fallbackIdx).padStart(4, "0")}`,
+      sku,
+      min_days_required: Number.isFinite(minDays) ? Math.max(0, Math.floor(minDays)) : NaN,
+      quantity: qty,
+    });
+    fallbackIdx += 1;
+  }
+  return out;
+}
+
+function buildBbdOptInputRows() {
+  const rows = bbdOptManualLines.map((x) => ({ ...x }));
+  const sku = normalizeSkuCode(ui.bbdOptSku?.value || "");
+  const qty = toNum(ui.bbdOptQty?.value || "");
+  if (sku && Number.isFinite(qty) && qty > 0) {
+    const minDaysRaw = toNum(ui.bbdOptMinDays?.value || "");
+    rows.push({
+      order_number: String(ui.bbdOptOrderNumber?.value || "").trim() || `MAN-${String(rows.length + 1).padStart(4, "0")}`,
+      sku,
+      min_days_required: Number.isFinite(minDaysRaw) ? Math.max(0, Math.floor(minDaysRaw)) : 0,
+      quantity: qty,
+    });
+  }
+  return rows;
+}
+
+function renderBbdOptManualLines() {
+  if (!ui.bbdOptManualBody) return;
+  ui.bbdOptManualBody.innerHTML = "";
+  for (let i = 0; i < bbdOptManualLines.length; i += 1) {
+    const line = bbdOptManualLines[i];
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${safeText(line.order_number)}</td><td>${safeText(line.sku)}</td><td>${safeText(
+      line.min_days_required
+    )}</td><td>${safeText(line.quantity)}</td><td><button type="button" class="secondary" data-remove-bbd-opt-manual="${i}">Remove</button></td>`;
+    ui.bbdOptManualBody.appendChild(tr);
+  }
+}
+
+function addBbdOptManualLine() {
+  const sku = normalizeSkuCode(ui.bbdOptSku?.value || "");
+  const qty = toNum(ui.bbdOptQty?.value || "");
+  const minDaysRaw = toNum(ui.bbdOptMinDays?.value || "");
+  const orderNumber = String(ui.bbdOptOrderNumber?.value || "").trim() || `MAN-${String(bbdOptManualLines.length + 1).padStart(4, "0")}`;
+  if (!sku || !Number.isFinite(qty) || qty <= 0) {
+    alert("Enter Order Number/SKU/Quantity to add manual order line.");
+    return;
+  }
+  bbdOptManualLines.push({
+    order_number: orderNumber,
+    sku,
+    min_days_required: Number.isFinite(minDaysRaw) ? Math.max(0, Math.floor(minDaysRaw)) : 0,
+    quantity: qty,
+  });
+  renderBbdOptManualLines();
+}
+
+function formatBbdOptDateThreshold(minDays) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  start.setDate(start.getDate() + minDays);
+  return start;
+}
+
+function runBbdOptSearch({ orderRows, bbdRuleRows }) {
+  clearBbdOptSelections();
+  bbdOptRuleBySku = new Map();
+  for (const r of bbdRuleRows) bbdOptRuleBySku.set(normalizeSkuCode(r.sku).toUpperCase(), Math.max(0, Number(r.min_days_required) || 0));
+
+  const rows = [];
+  for (const src of orderRows) {
+    const sku = normalizeSkuCode(src.sku || "");
+    if (!sku) continue;
+    const requiredQty = toNum(src.quantity);
+    if (!Number.isFinite(requiredQty) || requiredQty <= 0) continue;
+    const ruleMin = bbdOptRuleBySku.get(sku.toUpperCase());
+    const rowMinDays = Number.isFinite(toNum(src.min_days_required)) ? Math.max(0, Math.floor(toNum(src.min_days_required))) : 0;
+    const minDays = Number.isFinite(ruleMin) ? Math.max(ruleMin, rowMinDays) : rowMinDays;
+    const minDate = formatBbdOptDateThreshold(minDays);
+
+    const candidates = [];
+    for (const node of locationNodes) {
+      if (node.status !== "OCCUPIED" || !node.pallet) continue;
+      const availQty = inventoryQtyForSku(node, sku);
+      if (!(availQty > 0)) continue;
+      const bbd = normalizeBbdValue(node.pallet.bbd || "");
+      const bbdDate = parseBbdDate(bbd);
+      if (!bbdDate) continue;
+      if (bbdDate.getTime() < minDate.getTime()) continue;
+      candidates.push({
+        node,
+        bbd,
+        bbdTime: bbdDate.getTime(),
+        quantity_available: availQty,
+        location_type: locationTypeLabel(node),
+      });
+    }
+
+    candidates.sort((a, b) => {
+      if (a.bbdTime !== b.bbdTime) return a.bbdTime - b.bbdTime;
+      if (a.location_type !== b.location_type) return a.location_type.localeCompare(b.location_type);
+      return a.node.code.localeCompare(b.node.code);
+    });
+
+    let remaining = requiredQty;
+    const chosen = [];
+    for (const c of candidates) {
+      if (remaining <= 0) break;
+      chosen.push(c);
+      remaining -= c.quantity_available;
+    }
+
+    for (const c of chosen) {
+      const key = c.node.code;
+      if (!bbdOptSelectionsByLocation.has(key)) bbdOptSelectionsByLocation.set(key, []);
+      bbdOptSelectionsByLocation.get(key).push({
+        order_number: src.order_number,
+        sku,
+        min_days_required: minDays,
+        required_quantity: requiredQty,
+        bbd: c.bbd,
+        quantity_available: c.quantity_available,
+      });
+    }
+
+    const c1 = chosen[0] || null;
+    const c2 = chosen[1] || null;
+    rows.push({
+      order_number: src.order_number,
+      sku,
+      min_days_required: minDays,
+      required_quantity: requiredQty,
+      bbd_1: c1 ? c1.bbd : "",
+      location_1: c1 ? c1.node.code : "",
+      location_type_1: c1 ? c1.location_type : "",
+      quantity_available_1: c1 ? c1.quantity_available : "",
+      bbd_2: c2 ? c2.bbd : "",
+      location_2: c2 ? c2.node.code : "",
+      location_type_2: c2 ? c2.location_type : "",
+      quantity_available_2: c2 ? c2.quantity_available : "",
+      status: remaining <= 0 ? "MATCHED" : "INSUFFICIENT STOCK",
+      note:
+        chosen.length > 2
+          ? `Additional pallets matched: ${chosen.length - 2}`
+          : chosen.length === 0
+            ? "No pallet meets minimum BBD days."
+            : "",
+    });
+  }
+  bbdOptResultRows = rows;
+  if (ui.bbdOptDownloadBtn) ui.bbdOptDownloadBtn.disabled = !rows.length;
+  renderCanvas();
+  return rows;
+}
+
 function fileKey(file) {
   return `${file.name}__${file.size}__${file.lastModified}`;
 }
@@ -3550,6 +3854,86 @@ function appendIncomingFiles(files) {
     }
   }
   renderIncomingFilesQueue();
+}
+
+function appendBbdOptDeliveryFiles(files) {
+  const existing = new Set(bbdOptDeliveryFilesQueue.map((f) => fileKey(f)));
+  for (const file of files) {
+    const key = fileKey(file);
+    if (!existing.has(key)) {
+      bbdOptDeliveryFilesQueue.push(file);
+      existing.add(key);
+    }
+  }
+  if (ui.bbdOptStatus) {
+    ui.bbdOptStatus.textContent = `${bbdOptDeliveryFilesQueue.length} delivery order file(s) selected.`;
+  }
+}
+
+async function searchBbdOpt() {
+  if (!isAuthenticated()) {
+    enforceLoginModal();
+    return;
+  }
+  if (!hasPermission("can_upload_data")) {
+    alert("You do not have permission to run BBD OPT.");
+    logActivity("ACCESS_DENIED", "bbd_opt search blocked");
+    return;
+  }
+  if (!locationNodes.some((n) => n.status === "OCCUPIED")) {
+    alert("Upload inventory in Data and click Analyze + Pre-Allocate first.");
+    return;
+  }
+
+  try {
+    const bbdFile = ui.bbdRulesFile?.files?.[0] || null;
+    const bbdRaw = bbdFile ? await readTabularFile(bbdFile) : [];
+    const bbdRuleRows = parseBbdRuleRows(bbdRaw);
+
+    let deliveryRows = [];
+    const fromQueue = bbdOptDeliveryFilesQueue.length ? bbdOptDeliveryFilesQueue : Array.from(ui.deliveryOrderFile?.files || []);
+    if (fromQueue.length) {
+      const parsed = await Promise.all(fromQueue.map((f) => readTabularFile(f)));
+      for (const part of parsed) deliveryRows = deliveryRows.concat(parseDeliveryOrderRows(part));
+    }
+
+    const manualRows = buildBbdOptInputRows();
+    const allOrders = [...deliveryRows, ...manualRows];
+    if (!allOrders.length) {
+      alert("Upload delivery order files or add manual order line for BBD OPT.");
+      return;
+    }
+
+    const result = runBbdOptSearch({ orderRows: allOrders, bbdRuleRows });
+    const matched = result.filter((r) => r.status === "MATCHED").length;
+    const insufficient = result.length - matched;
+    if (ui.bbdOptStatus) {
+      ui.bbdOptStatus.textContent = `Search completed: ${result.length} order lines, matched ${matched}, insufficient ${insufficient}. Violet pallets are marked RE.`;
+    }
+    logActivity("BBD_OPT_SEARCH", `orders=${result.length}, matched=${matched}, insufficient=${insufficient}`);
+  } catch (err) {
+    console.error(err);
+    alert(`BBD OPT failed: ${err.message}`);
+    if (ui.bbdOptStatus) ui.bbdOptStatus.textContent = `BBD OPT failed: ${err.message}`;
+  }
+}
+
+function downloadBbdOptResult() {
+  if (!isAuthenticated()) {
+    enforceLoginModal();
+    return;
+  }
+  if (!hasPermission("can_download_reports")) {
+    alert("You do not have permission to download reports.");
+    logActivity("ACCESS_DENIED", "bbd_opt download blocked");
+    return;
+  }
+  if (!bbdOptResultRows.length) {
+    alert("No BBD OPT result available. Click SEARCH first.");
+    return;
+  }
+  downloadRowsAsXlsx(bbdOptResultRows, "bbd_opt_result.xlsx", "BBD OPT");
+  logActivity("DOWNLOAD", `BBD OPT | ${bbdOptResultRows.length} rows`);
 }
 
 async function analyze() {
@@ -3812,6 +4196,39 @@ ui.resultModalClose?.addEventListener("click", () => ui.resultModal?.classList.a
 ui.resultModal?.addEventListener("click", (event) => {
   if (event.target === ui.resultModal) ui.resultModal.classList.add("hidden");
 });
+ui.openBbdOptBtn?.addEventListener("click", () => {
+  if (!isAuthenticated()) {
+    enforceLoginModal();
+    return;
+  }
+  if (!hasPermission("can_upload_data")) {
+    alert("You do not have permission to open BBD OPT.");
+    logActivity("ACCESS_DENIED", "open bbd_opt modal blocked");
+    return;
+  }
+  ui.bbdOptModal?.classList.remove("hidden");
+});
+ui.bbdOptModalClose?.addEventListener("click", () => ui.bbdOptModal?.classList.add("hidden"));
+ui.bbdOptModal?.addEventListener("click", (event) => {
+  if (event.target === ui.bbdOptModal) ui.bbdOptModal.classList.add("hidden");
+});
+ui.deliveryOrderFile?.addEventListener("change", () => {
+  appendBbdOptDeliveryFiles(Array.from(ui.deliveryOrderFile.files || []));
+  ui.deliveryOrderFile.value = "";
+});
+ui.bbdOptAddManualBtn?.addEventListener("click", addBbdOptManualLine);
+ui.bbdOptManualBody?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const idx = target.getAttribute("data-remove-bbd-opt-manual");
+  if (idx === null) return;
+  const index = Number(idx);
+  if (!Number.isInteger(index) || index < 0 || index >= bbdOptManualLines.length) return;
+  bbdOptManualLines.splice(index, 1);
+  renderBbdOptManualLines();
+});
+ui.bbdOptSearchBtn?.addEventListener("click", searchBbdOpt);
+ui.bbdOptDownloadBtn?.addEventListener("click", downloadBbdOptResult);
 ui.addManualLineBtn.addEventListener("click", addManualLine);
 ui.incomingFile.addEventListener("change", () => {
   if (!hasPermission("can_upload_data")) {
@@ -3889,15 +4306,18 @@ ui.authLoginBtn.addEventListener("click", async () => {
       if (resp.ok) {
         const body = await resp.json();
         user = body.user || null;
+        setAuthToken(body.token || "");
       }
     } catch {
       user = null;
+      setAuthToken("");
     }
   } else {
     const users = loadUsers();
     user = users.find((u) => u.username === username && u.password === password) || null;
   }
   if (!user) {
+    setAuthToken("");
     ui.authStatusText.textContent = "Invalid username or password.";
     return;
   }
@@ -3933,10 +4353,8 @@ ui.authCreateBtn.addEventListener("click", async () => {
     try {
       const resp = await fetch(`${API_BASE}/users`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
-          admin_user: getCurrentUser(),
-          admin_role: getCurrentRole(),
           username,
           password,
           role,
@@ -3995,10 +4413,8 @@ ui.authChangePasswordBtn?.addEventListener("click", async () => {
     try {
       const resp = await fetch(`${API_BASE}/users/change-password`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
-          actor_user: getCurrentUser(),
-          actor_role: getCurrentRole(),
           username: targetUsername,
           old_password: currentPassword,
           new_password: newPassword,
@@ -4042,6 +4458,7 @@ ui.authChangePasswordBtn?.addEventListener("click", async () => {
 });
 ui.authLogoutBtn.addEventListener("click", () => {
   logActivity("LOGOUT", `user=${getCurrentUser()}`);
+  setAuthToken("");
   setCurrentRole("GUEST");
   setCurrentPermissions(normalizePermissions({}, "USER"));
   setCurrentUser("guest");
@@ -4057,10 +4474,8 @@ ui.usersTableBody?.addEventListener("click", (event) => {
   if (serverAuditEnabled) {
     fetch(`${API_BASE}/users/delete`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
-        admin_user: getCurrentUser(),
-        admin_role: getCurrentRole(),
         username,
       }),
     })
@@ -4108,8 +4523,8 @@ ui.clearAuditLog?.addEventListener("click", () => {
   if (serverAuditEnabled) {
     fetch(`${API_BASE}/activity/clear`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user: getCurrentUser(), role: getCurrentRole() }),
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({}),
     }).catch(() => {});
   }
   renderAuditLog();
