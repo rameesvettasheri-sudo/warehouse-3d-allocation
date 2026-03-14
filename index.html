@@ -289,6 +289,18 @@
         <label for="deliveryOrderFile">Delivery Order Files (.csv/.xlsx)</label>
         <input id="deliveryOrderFile" type="file" accept=".csv,.xlsx,.xls" multiple />
         <p class="hint">Multiple files supported (e.g. Transfer files).</p>
+        <div class="actions">
+          <button id="bbdOptClearDeliveryFilesBtn" type="button" class="secondary">Clear Delivery Files</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>File Name</th>
+              <th>Size (KB)</th>
+            </tr>
+          </thead>
+          <tbody id="bbdOptDeliveryFilesBody"></tbody>
+        </table>
 
         <label for="bbdOptOrderNumber">Order Number</label>
         <input id="bbdOptOrderNumber" type="text" placeholder="e.g. DO-1001" />

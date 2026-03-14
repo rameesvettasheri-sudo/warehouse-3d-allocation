@@ -55,6 +55,8 @@ const ui = {
   bbdOptSearchBtn: document.getElementById("bbdOptSearchBtn"),
   bbdOptDownloadBtn: document.getElementById("bbdOptDownloadBtn"),
   bbdOptStatus: document.getElementById("bbdOptStatus"),
+  bbdOptClearDeliveryFilesBtn: document.getElementById("bbdOptClearDeliveryFilesBtn"),
+  bbdOptDeliveryFilesBody: document.getElementById("bbdOptDeliveryFilesBody"),
   openResultBtn: document.getElementById("openResultBtn"),
   resultModal: document.getElementById("resultModal"),
   resultModalClose: document.getElementById("resultModalClose"),
@@ -3940,8 +3942,25 @@ function appendBbdOptDeliveryFiles(files) {
       existing.add(key);
     }
   }
+  renderBbdOptDeliveryFilesQueue();
   if (ui.bbdOptStatus) {
     ui.bbdOptStatus.textContent = `${bbdOptDeliveryFilesQueue.length} delivery order file(s) selected.`;
+  }
+}
+
+function renderBbdOptDeliveryFilesQueue() {
+  if (!ui.bbdOptDeliveryFilesBody) return;
+  ui.bbdOptDeliveryFilesBody.innerHTML = "";
+  if (!bbdOptDeliveryFilesQueue.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td colspan=\"2\">No delivery files selected.</td>";
+    ui.bbdOptDeliveryFilesBody.appendChild(tr);
+    return;
+  }
+  for (const f of bbdOptDeliveryFilesQueue) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${safeText(f.name)}</td><td>${(f.size / 1024).toFixed(1)}</td>`;
+    ui.bbdOptDeliveryFilesBody.appendChild(tr);
   }
 }
 
@@ -4184,6 +4203,7 @@ function init() {
   buildLocationNodes();
   populateGroupFilter();
   applyResponsiveDefaults();
+  renderBbdOptDeliveryFilesQueue();
   renderInitial();
 }
 
@@ -4281,6 +4301,7 @@ ui.openBbdOptBtn?.addEventListener("click", () => {
     logActivity("ACCESS_DENIED", "open bbd_opt modal blocked");
     return;
   }
+  renderBbdOptDeliveryFilesQueue();
   ui.bbdOptModal?.classList.remove("hidden");
 });
 ui.bbdOptModalClose?.addEventListener("click", () => ui.bbdOptModal?.classList.add("hidden"));
@@ -4290,6 +4311,11 @@ ui.bbdOptModal?.addEventListener("click", (event) => {
 ui.deliveryOrderFile?.addEventListener("change", () => {
   appendBbdOptDeliveryFiles(Array.from(ui.deliveryOrderFile.files || []));
   ui.deliveryOrderFile.value = "";
+});
+ui.bbdOptClearDeliveryFilesBtn?.addEventListener("click", () => {
+  bbdOptDeliveryFilesQueue = [];
+  renderBbdOptDeliveryFilesQueue();
+  if (ui.bbdOptStatus) ui.bbdOptStatus.textContent = "Delivery order files cleared.";
 });
 ui.bbdOptAddManualBtn?.addEventListener("click", addBbdOptManualLine);
 ui.bbdOptManualBody?.addEventListener("click", (event) => {
