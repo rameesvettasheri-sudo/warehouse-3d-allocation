@@ -289,6 +289,7 @@
         <label for="deliveryOrderFile">Delivery Order Files (.csv/.xlsx)</label>
         <input id="deliveryOrderFile" type="file" accept=".csv,.xlsx,.xls" multiple />
         <p class="hint">Multiple files supported (e.g. Transfer files).</p>
+        <p class="hint" id="bbdOptDeliverySelectedText">No delivery files selected.</p>
         <div class="actions">
           <button id="bbdOptClearDeliveryFilesBtn" type="button" class="secondary">Clear Delivery Files</button>
         </div>
@@ -430,6 +431,7 @@
         <div class="actions">
           <button id="authLoginBtn" type="button">Login</button>
           <button id="authCreateBtn" type="button" class="secondary">Create Account</button>
+          <button id="authChangeUserIdBtn" type="button" class="secondary">Change User ID</button>
           <button id="authChangePasswordBtn" type="button" class="secondary">Change Password</button>
           <button id="authLogoutBtn" type="button" class="secondary">Logout</button>
         </div>
@@ -445,7 +447,7 @@
           </thead>
           <tbody id="usersTableBody"></tbody>
         </table>
-        <p class="hint" id="authStatusText">Default user: admin / admin123</p>
+        <p class="hint" id="authStatusText">Default user: Ramees / Ramees@123v</p>
       </div>
     </div>
   </body>

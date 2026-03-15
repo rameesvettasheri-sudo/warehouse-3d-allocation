@@ -57,6 +57,7 @@ const ui = {
   bbdOptStatus: document.getElementById("bbdOptStatus"),
   bbdOptClearDeliveryFilesBtn: document.getElementById("bbdOptClearDeliveryFilesBtn"),
   bbdOptDeliveryFilesBody: document.getElementById("bbdOptDeliveryFilesBody"),
+  bbdOptDeliverySelectedText: document.getElementById("bbdOptDeliverySelectedText"),
   openResultBtn: document.getElementById("openResultBtn"),
   resultModal: document.getElementById("resultModal"),
   resultModalClose: document.getElementById("resultModalClose"),
@@ -122,6 +123,7 @@ const ui = {
   permViewLoginActivity: document.getElementById("permViewLoginActivity"),
   authLoginBtn: document.getElementById("authLoginBtn"),
   authCreateBtn: document.getElementById("authCreateBtn"),
+  authChangeUserIdBtn: document.getElementById("authChangeUserIdBtn"),
   authChangePasswordBtn: document.getElementById("authChangePasswordBtn"),
   authLogoutBtn: document.getElementById("authLogoutBtn"),
   authStatusText: document.getElementById("authStatusText"),
@@ -196,6 +198,8 @@ const CURRENT_ROLE_KEY = "warehouse_current_role_v1";
 const CURRENT_PERMISSIONS_KEY = "warehouse_current_permissions_v1";
 const AUTH_TOKEN_KEY = "warehouse_auth_token_v1";
 const ACTIVITY_LOG_KEY = "warehouse_activity_log_v1";
+const LOCAL_ADMIN_USERNAME = "Ramees";
+const LOCAL_ADMIN_PASSWORD = "Ramees@123v";
 const API_BASE = `${window.location.origin}/api`;
 
 let serverAuditEnabled = false;
@@ -1568,15 +1572,17 @@ function showPalletPopup(node) {
     ui.palletModalBody.appendChild(h);
     const t = document.createElement("table");
     t.innerHTML =
-      "<thead><tr><th>Order Number</th><th>SKU</th><th>Req UOM</th><th>Min Days</th><th>Required Qty</th><th>Pallet BBD</th><th>Qty Available</th><th>Pallet UOM</th></tr></thead>";
+      "<thead><tr><th>Order Number</th><th>SKU</th><th>Req UOM</th><th>Min Days</th><th>Required Qty</th><th>Picked Qty</th><th>Pallet BBD</th><th>Qty Available</th><th>Pallet UOM</th><th>Total SKU Qty</th></tr></thead>";
     const tb = document.createElement("tbody");
     for (const m of bbdOptMatches) {
       const tr = document.createElement("tr");
       tr.innerHTML = `<td>${safeText(m.order_number)}</td><td>${safeText(m.sku)}</td><td>${safeText(
         m.required_uom
       )}</td><td>${safeText(m.min_days_required)}</td><td>${safeText(m.required_quantity)}</td><td>${safeText(
-        m.bbd
-      )}</td><td>${safeText(m.quantity_available)}</td><td>${safeText(m.quantity_unit)}</td>`;
+        m.picked_quantity
+      )}</td><td>${safeText(m.bbd)}</td><td>${safeText(m.quantity_available)}</td><td>${safeText(
+        m.quantity_unit
+      )}</td><td>${safeText(m.total_available_qty_sku)}</td>`;
       tb.appendChild(tr);
     }
     t.appendChild(tb);
@@ -1724,15 +1730,29 @@ function loadUsers() {
   try {
     const raw = localStorage.getItem(USERS_KEY);
     if (!raw)
-      return [{ username: "admin", password: "admin123", role: "ADMIN", permissions: normalizePermissions({}, "ADMIN") }];
+      return [
+        {
+          username: LOCAL_ADMIN_USERNAME,
+          password: LOCAL_ADMIN_PASSWORD,
+          role: "ADMIN",
+          permissions: normalizePermissions({}, "ADMIN"),
+        },
+      ];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length === 0)
-      return [{ username: "admin", password: "admin123", role: "ADMIN", permissions: normalizePermissions({}, "ADMIN") }];
+      return [
+        {
+          username: LOCAL_ADMIN_USERNAME,
+          password: LOCAL_ADMIN_PASSWORD,
+          role: "ADMIN",
+          permissions: normalizePermissions({}, "ADMIN"),
+        },
+      ];
     const normalized = parsed
       .map((u) => {
         const username = String(u.username || "").trim();
         let role = String(u.role || "").trim().toUpperCase() === "ADMIN" ? "ADMIN" : "USER";
-        if (username.toLowerCase() === "admin") role = "ADMIN";
+        if (username.toLowerCase() === LOCAL_ADMIN_USERNAME.toLowerCase()) role = "ADMIN";
         return {
           username,
           password: String(u.password || "").trim(),
@@ -1741,12 +1761,24 @@ function loadUsers() {
         };
       })
       .filter((u) => u.username && u.password);
-    if (!normalized.find((u) => u.username.toLowerCase() === "admin")) {
-      normalized.push({ username: "admin", password: "admin123", role: "ADMIN", permissions: normalizePermissions({}, "ADMIN") });
+    if (!normalized.find((u) => u.username.toLowerCase() === LOCAL_ADMIN_USERNAME.toLowerCase())) {
+      normalized.push({
+        username: LOCAL_ADMIN_USERNAME,
+        password: LOCAL_ADMIN_PASSWORD,
+        role: "ADMIN",
+        permissions: normalizePermissions({}, "ADMIN"),
+      });
     }
     return normalized;
   } catch {
-    return [{ username: "admin", password: "admin123", role: "ADMIN", permissions: normalizePermissions({}, "ADMIN") }];
+    return [
+      {
+        username: LOCAL_ADMIN_USERNAME,
+        password: LOCAL_ADMIN_PASSWORD,
+        role: "ADMIN",
+        permissions: normalizePermissions({}, "ADMIN"),
+      },
+    ];
   }
 }
 
@@ -1914,7 +1946,7 @@ function renderUsersTable() {
   ui.usersTableBody.innerHTML = "";
   const adminMode = isAdminUser();
   for (const u of users) {
-    const canDelete = adminMode && u.username.toLowerCase() !== "admin";
+    const canDelete = adminMode && u.username.toLowerCase() !== LOCAL_ADMIN_USERNAME.toLowerCase();
     const tr = document.createElement("tr");
     const tdUser = document.createElement("td");
     tdUser.textContent = safeText(u.username);
@@ -2012,6 +2044,9 @@ function initAuth() {
   renderAccessState();
   updateAppLockState();
   enforceLoginModal();
+  if (!serverAuditEnabled && ui.authStatusText) {
+    ui.authStatusText.textContent = "Local mode: user changes are only on this device. Use Node server deployment for shared users.";
+  }
 }
 
 function parseBbdDate(value) {
@@ -3813,7 +3848,17 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
   for (const r of bbdRuleRows) bbdOptRuleBySku.set(normalizeSkuCode(r.sku).toUpperCase(), Math.max(0, Number(r.min_days_required) || 0));
 
   const rows = [];
-  for (const src of orderRows) {
+  const reservedLocations = new Set();
+  const orderedRows = [...orderRows].sort((a, b) => {
+    const sa = normalizeSkuCode(a.sku || "");
+    const sb = normalizeSkuCode(b.sku || "");
+    if (sa !== sb) return sa.localeCompare(sb);
+    const oa = String(a.order_number || "");
+    const ob = String(b.order_number || "");
+    return oa.localeCompare(ob);
+  });
+
+  for (const src of orderedRows) {
     const sku = normalizeSkuCode(src.sku || "");
     if (!sku) continue;
     const requiredQty = toNum(src.quantity);
@@ -3824,7 +3869,7 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
     const minDate = formatBbdOptDateThreshold(minDays);
     const requiredUom = normalizeQtyUnit(src.required_uom || "CASE");
 
-    const candidates = [];
+    const allEligible = [];
     for (const node of locationNodes) {
       if (node.status !== "OCCUPIED" || !node.pallet) continue;
       const availQty = inventoryQtyForSku(node, sku);
@@ -3833,7 +3878,7 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
       const bbdDate = parseBbdDate(bbd);
       if (!bbdDate) continue;
       if (bbdDate.getTime() < minDate.getTime()) continue;
-      candidates.push({
+      allEligible.push({
         node,
         bbd,
         bbdTime: bbdDate.getTime(),
@@ -3842,6 +3887,9 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
         location_type: locationTypeLabel(node),
       });
     }
+
+    const totalAvailableQtySku = allEligible.reduce((s, c) => s + c.quantity_available, 0);
+    const candidates = allEligible.filter((c) => !reservedLocations.has(c.node.code));
 
     candidates.sort((a, b) => {
       const uA = a.quantity_unit === requiredUom ? 0 : 1;
@@ -3854,14 +3902,33 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
 
     let remaining = requiredQty;
     const chosen = [];
-    for (const c of candidates) {
-      if (remaining <= 0) break;
-      chosen.push(c);
-      remaining -= c.quantity_available;
+    const singlePalletMatch = candidates
+      .filter((c) => c.quantity_available >= requiredQty)
+      .sort((a, b) => {
+        if (a.bbdTime !== b.bbdTime) return a.bbdTime - b.bbdTime;
+        const sa = a.quantity_available - requiredQty;
+        const sb = b.quantity_available - requiredQty;
+        if (sa !== sb) return sa - sb;
+        return a.node.code.localeCompare(b.node.code);
+      })[0];
+
+    if (singlePalletMatch) {
+      chosen.push(singlePalletMatch);
+      remaining = 0;
+    } else {
+      for (const c of candidates) {
+        if (remaining <= 0) break;
+        chosen.push(c);
+        remaining -= c.quantity_available;
+      }
     }
 
+    let remainingForSelection = requiredQty;
     for (const c of chosen) {
       const key = c.node.code;
+      const pickQty = singlePalletMatch ? requiredQty : Math.min(c.quantity_available, remainingForSelection);
+      remainingForSelection -= pickQty;
+      reservedLocations.add(key);
       if (!bbdOptSelectionsByLocation.has(key)) bbdOptSelectionsByLocation.set(key, []);
       bbdOptSelectionsByLocation.get(key).push({
         order_number: src.order_number,
@@ -3869,39 +3936,63 @@ function runBbdOptSearch({ orderRows, bbdRuleRows }) {
         required_uom: requiredUom,
         min_days_required: minDays,
         required_quantity: requiredQty,
+        picked_quantity: pickQty,
         bbd: c.bbd,
         quantity_available: c.quantity_available,
         quantity_unit: c.quantity_unit,
+        total_available_qty_sku: totalAvailableQtySku,
       });
     }
 
-    const c1 = chosen[0] || null;
-    const c2 = chosen[1] || null;
-    rows.push({
-      order_number: src.order_number,
-      sku,
-      required_uom: requiredUom,
-      min_days_required: minDays,
-      required_quantity: requiredQty,
-      bbd_1: c1 ? c1.bbd : "",
-      location_1: c1 ? c1.node.code : "",
-      location_type_1: c1 ? c1.location_type : "",
-      quantity_available_1: c1 ? c1.quantity_available : "",
-      quantity_unit_1: c1 ? c1.quantity_unit : "",
-      bbd_2: c2 ? c2.bbd : "",
-      location_2: c2 ? c2.node.code : "",
-      location_type_2: c2 ? c2.location_type : "",
-      quantity_available_2: c2 ? c2.quantity_available : "",
-      quantity_unit_2: c2 ? c2.quantity_unit : "",
-      status: remaining <= 0 ? "MATCHED" : "INSUFFICIENT STOCK",
-      note:
-        chosen.length > 2
-          ? `Additional pallets matched: ${chosen.length - 2}`
-          : chosen.length === 0
-            ? "No pallet meets minimum BBD days."
-            : "",
-    });
+    if (!chosen.length) {
+      rows.push({
+        order_number: src.order_number,
+        sku,
+        required_uom: requiredUom,
+        min_days_required: minDays,
+        required_quantity: requiredQty,
+        pallet_location: "",
+        location_type: "",
+        pallet_bbd: "",
+        picked_quantity: "",
+        quantity_available: "",
+        pallet_uom: "",
+        status: "NO MATCH",
+        total_available_qty_sku: totalAvailableQtySku,
+      });
+      continue;
+    }
+
+    let remainingForRows = requiredQty;
+    for (const c of chosen) {
+      const pickQty = singlePalletMatch ? requiredQty : Math.min(c.quantity_available, remainingForRows);
+      remainingForRows -= pickQty;
+      rows.push({
+        order_number: src.order_number,
+        sku,
+        required_uom: requiredUom,
+        min_days_required: minDays,
+        required_quantity: requiredQty,
+        pallet_location: c.node.code,
+        location_type: c.location_type,
+        pallet_bbd: c.bbd,
+        picked_quantity: pickQty,
+        quantity_available: c.quantity_available,
+        pallet_uom: c.quantity_unit,
+        status: remaining <= 0 ? "MATCHED" : "INSUFFICIENT STOCK",
+        total_available_qty_sku: totalAvailableQtySku,
+      });
+    }
   }
+  rows.sort((a, b) => {
+    const sa = normalizeSkuCode(a.sku || "");
+    const sb = normalizeSkuCode(b.sku || "");
+    if (sa !== sb) return sa.localeCompare(sb);
+    const oa = String(a.order_number || "");
+    const ob = String(b.order_number || "");
+    if (oa !== ob) return oa.localeCompare(ob);
+    return String(a.pallet_location || "").localeCompare(String(b.pallet_location || ""));
+  });
   bbdOptResultRows = rows;
   if (ui.bbdOptDownloadBtn) ui.bbdOptDownloadBtn.disabled = !rows.length;
   renderCanvas();
@@ -3955,7 +4046,13 @@ function renderBbdOptDeliveryFilesQueue() {
     const tr = document.createElement("tr");
     tr.innerHTML = "<td colspan=\"2\">No delivery files selected.</td>";
     ui.bbdOptDeliveryFilesBody.appendChild(tr);
+    if (ui.bbdOptDeliverySelectedText) ui.bbdOptDeliverySelectedText.textContent = "No delivery files selected.";
     return;
+  }
+  if (ui.bbdOptDeliverySelectedText) {
+    const names = bbdOptDeliveryFilesQueue.map((f) => f.name).slice(0, 3);
+    const more = bbdOptDeliveryFilesQueue.length > 3 ? ` (+${bbdOptDeliveryFilesQueue.length - 3} more)` : "";
+    ui.bbdOptDeliverySelectedText.textContent = `Selected: ${names.join(", ")}${more}`;
   }
   for (const f of bbdOptDeliveryFilesQueue) {
     const tr = document.createElement("tr");
@@ -3999,12 +4096,13 @@ async function searchBbdOpt() {
     }
 
     const result = runBbdOptSearch({ orderRows: allOrders, bbdRuleRows });
-    const matched = result.filter((r) => r.status === "MATCHED").length;
-    const insufficient = result.length - matched;
+    const orderCount = new Set(allOrders.map((r) => `${r.order_number}|${normalizeSkuCode(r.sku || "")}`)).size;
+    const matchedOrderCount = new Set(result.filter((r) => r.status === "MATCHED").map((r) => `${r.order_number}|${normalizeSkuCode(r.sku || "")}`)).size;
+    const insufficientOrderCount = Math.max(orderCount - matchedOrderCount, 0);
     if (ui.bbdOptStatus) {
-      ui.bbdOptStatus.textContent = `Search completed: ${result.length} order lines, matched ${matched}, insufficient ${insufficient}. Violet pallets are marked RE.`;
+      ui.bbdOptStatus.textContent = `Search completed: ${orderCount} order lines, matched ${matchedOrderCount}, insufficient ${insufficientOrderCount}. Output has ${result.length} pallet rows. Violet pallets are marked RE.`;
     }
-    logActivity("BBD_OPT_SEARCH", `orders=${result.length}, matched=${matched}, insufficient=${insufficient}`);
+    logActivity("BBD_OPT_SEARCH", `orders=${orderCount}, matched=${matchedOrderCount}, insufficient=${insufficientOrderCount}, pallet_rows=${result.length}`);
   } catch (err) {
     console.error(err);
     alert(`BBD OPT failed: ${err.message}`);
@@ -4488,6 +4586,77 @@ ui.authCreateBtn.addEventListener("click", async () => {
   logActivity("CREATE_USER", `created=${username}, role=${role}, perms=${permissionsLabel(permissions, role)}`);
   ui.authStatusText.textContent = `Account created for ${username} (${role}).`;
 });
+ui.authChangeUserIdBtn?.addEventListener("click", async () => {
+  if (!isAuthenticated()) {
+    ui.authStatusText.textContent = "Login required to change user ID.";
+    enforceLoginModal();
+    return;
+  }
+  const targetUsername = String(ui.authUsername?.value || "").trim() || getCurrentUser();
+  const newUsername = window.prompt(`Enter new user ID for ${targetUsername}:`, "") || "";
+  if (!newUsername.trim()) {
+    ui.authStatusText.textContent = "New user ID is required.";
+    return;
+  }
+
+  if (serverAuditEnabled) {
+    try {
+      const currentPassword = targetUsername === getCurrentUser() ? window.prompt("Enter current password:", "") || "" : "";
+      const resp = await fetch(`${API_BASE}/users/rename`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          username: targetUsername,
+          new_username: newUsername.trim(),
+          current_password: currentPassword,
+        }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        ui.authStatusText.textContent = body.error || "Unable to change user ID.";
+        return;
+      }
+      if (targetUsername === getCurrentUser()) {
+        if (body.token) setAuthToken(body.token);
+        setCurrentRole(body.user?.role || getCurrentRole());
+        setCurrentPermissions(normalizePermissions(body.user?.permissions || {}, body.user?.role || getCurrentRole()));
+        setCurrentUser(body.user?.username || newUsername.trim());
+      }
+      await refreshServerUsers(true);
+      renderUsersTable();
+      logActivity("CHANGE_USER_ID", `from=${targetUsername}, to=${newUsername.trim()}`);
+      ui.authStatusText.textContent = `User ID changed: ${targetUsername} -> ${newUsername.trim()}`;
+      return;
+    } catch {
+      ui.authStatusText.textContent = "Unable to change user ID.";
+      return;
+    }
+  }
+
+  const users = loadUsers();
+  const actor = users.find((u) => u.username === getCurrentUser());
+  const target = users.find((u) => u.username === targetUsername);
+  if (!actor || !target) {
+    ui.authStatusText.textContent = "User not found.";
+    return;
+  }
+  if (users.some((u) => u.username.toLowerCase() === newUsername.trim().toLowerCase() && u.username !== target.username)) {
+    ui.authStatusText.textContent = "Username already exists.";
+    return;
+  }
+  const isSelf = actor.username === target.username;
+  const isAdmin = String(actor.role || "").toUpperCase() === "ADMIN";
+  if (!isSelf && !isAdmin) {
+    ui.authStatusText.textContent = "Only ADMIN can change other users ID.";
+    return;
+  }
+  target.username = newUsername.trim();
+  saveUsers(users);
+  if (isSelf) setCurrentUser(newUsername.trim());
+  renderUsersTable();
+  logActivity("CHANGE_USER_ID", `from=${targetUsername}, to=${newUsername.trim()}`);
+  ui.authStatusText.textContent = `User ID changed: ${targetUsername} -> ${newUsername.trim()}`;
+});
 ui.authChangePasswordBtn?.addEventListener("click", async () => {
   if (!isAuthenticated()) {
     ui.authStatusText.textContent = "Login required to change password.";
@@ -4495,8 +4664,9 @@ ui.authChangePasswordBtn?.addEventListener("click", async () => {
     return;
   }
   const targetUsername = String(ui.authUsername?.value || "").trim() || getCurrentUser();
-  const currentPassword = window.prompt(`Current password for ${targetUsername}:`, "") || "";
-  if (!currentPassword) {
+  const isSelfTarget = targetUsername === getCurrentUser();
+  const currentPassword = isSelfTarget ? window.prompt(`Current password for ${targetUsername}:`, "") || "" : "";
+  if (isSelfTarget && !currentPassword) {
     ui.authStatusText.textContent = "Password change cancelled.";
     return;
   }
